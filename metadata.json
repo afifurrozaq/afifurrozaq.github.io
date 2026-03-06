@@ -1,0 +1,8 @@
+{
+  "name": "Afifur Rozaq Portfolio",
+  "description": "Professional portfolio of Afifur Rozaq, Lead Technical Engineer, featuring experience, skills, and AI-powered video generation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
