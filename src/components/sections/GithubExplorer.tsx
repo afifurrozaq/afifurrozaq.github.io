@@ -22,20 +22,74 @@ export const GithubExplorer: React.FC = () => {
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const githubHeaders = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'Mozilla/5.0',
+  };
+
+  const getCachedData = (key: string) => {
+    if (typeof window === 'undefined') return null;
+
+    try {
+      const cached = window.sessionStorage.getItem(key);
+      if (!cached) return null;
+
+      const parsed = JSON.parse(cached) as { user: GithubUser; repos: GithubRepo[]; timestamp: number };
+      const isFresh = Date.now() - parsed.timestamp < 1000 * 60 * 60 * 3;
+      return isFresh ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const setCachedData = (key: string, userData: GithubUser, reposData: GithubRepo[]) => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify({
+        user: userData,
+        repos: reposData,
+        timestamp: Date.now(),
+      }));
+    } catch {
+      // Ignore storage failures.
+    }
+  };
 
   const fetchData = async (userToFetch: string) => {
-    if (!userToFetch) return;
+    const normalizedUsername = userToFetch.trim();
+    if (!normalizedUsername) return;
+
+    const cacheKey = `github-explorer:${normalizedUsername.toLowerCase()}`;
+    const cached = getCachedData(cacheKey);
+
+    if (cached) {
+      setUser(cached.user);
+      setRepos(cached.repos);
+      setError(null);
+      setNotice('Showing cached GitHub data while the API is rate-limited.');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setNotice(null);
+
     try {
-      const userRes = await fetch(`/api/github/user/${userToFetch}`);
+      const userRes = await fetch(`https://api.github.com/users/${normalizedUsername}`, {
+        headers: githubHeaders,
+      });
       
-      if (userRes.status === 403) {
-        throw new Error("GitHub API rate limit exceeded. Please try again later.");
+      if (userRes.status === 403 || userRes.status === 429) {
+        throw new Error('GitHub is temporarily rate-limiting requests. Please try again later.');
       }
       
       if (userRes.status === 404) {
-        throw new Error(`User "${userToFetch}" not found on GitHub.`);
+        throw new Error(`User "${normalizedUsername}" not found on GitHub.`);
       }
 
       if (!userRes.ok) {
@@ -45,15 +99,24 @@ export const GithubExplorer: React.FC = () => {
       const userData = await userRes.json();
       setUser(userData);
 
-      const reposRes = await fetch(`/api/github/repos/${userToFetch}`);
-      if (!reposRes.ok) throw new Error("Failed to fetch repositories.");
+      const reposRes = await fetch(`https://api.github.com/users/${normalizedUsername}/repos?sort=updated&per_page=6`, {
+        headers: githubHeaders,
+      });
+
+      if (reposRes.status === 403 || reposRes.status === 429) {
+        throw new Error('GitHub is temporarily rate-limiting requests. Please try again later.');
+      }
+
+      if (!reposRes.ok) throw new Error('Failed to fetch repositories.');
       
       const reposData = await reposRes.json();
       setRepos(reposData);
+      setCachedData(cacheKey, userData, reposData);
     } catch (err: any) {
       setError(err.message);
       setUser(null);
       setRepos([]);
+      setNotice('GitHub is temporarily rate-limiting requests. Try again in a few minutes.');
     } finally {
       setLoading(false);
     }
@@ -106,18 +169,18 @@ export const GithubExplorer: React.FC = () => {
         </form>
       </div>
 
-      {error && (
+      {(error || notice) && (
         <motion.div 
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-6 bg-red-500/5 border border-red-500/10 rounded-3xl flex items-center gap-4 text-red-600 dark:text-red-400 text-sm font-medium"
+          className="p-6 bg-amber-500/5 border border-amber-500/10 rounded-3xl flex items-center gap-4 text-amber-600 dark:text-amber-400 text-sm font-medium"
         >
-          <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/10 flex items-center justify-center shrink-0">
             <AlertCircle className="w-6 h-6" />
           </div>
           <div>
-            <p className="font-black text-base mb-0.5">Something went wrong</p>
-            <p className="opacity-80">{error}</p>
+            <p className="font-black text-base mb-0.5">{error ? 'Something went wrong' : 'GitHub preview is temporarily unavailable'}</p>
+            <p className="opacity-80">{error || notice}</p>
           </div>
         </motion.div>
       )}
